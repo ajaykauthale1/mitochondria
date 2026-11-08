@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Fast single-OS check on every PR push — catches vet/test/race regressions quickly.
+  check:
+    name: ubuntu · go 1.24
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - run: go vet ./internal/...
+      - run: go test -race ./internal/...
+
+  # Full OS matrix — runs only when merging to main (the cross-platform gate).
+  matrix:
+    name: ${{ matrix.os }} · go 1.24
+    runs-on: ${{ matrix.os }}
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - run: go vet ./internal/...
+      - run: go test -race ./internal/...

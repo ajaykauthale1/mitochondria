@@ -1,0 +1,20 @@
+# private planning & rules (local only)
+PLAN.md
+TASKS.md
+CLAUDE.md
+
+# dependencies & build
+build/bin/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/wailsjs/
+coverage/
+*.exe
+*.db
+*.db-shm
+*.db-wal
+*.log
+.env
+.DS_Store
+.idea/
