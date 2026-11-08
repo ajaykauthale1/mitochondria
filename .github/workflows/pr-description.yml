@@ -1,0 +1,40 @@
+name: PR description
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  require-description:
+    name: Require PR description
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ -z "$BODY" ] || [ "$(echo "$BODY" | tr -d '[:space:]')" = "" ]; then
+            echo "::error::PR description is empty. Every PR must describe what it does, what is mocked/stubbed, and what the next PR will do. See CLAUDE.md § PR size."
+            exit 1
+          fi
+
+          missing=""
+
+          if ! echo "$BODY" | grep -qi "what this pr does"; then
+            missing="$missing\n  - Missing section: 'What this PR does'"
+          fi
+
+          if ! echo "$BODY" | grep -qi "mocked\|stubbed\|N/A"; then
+            missing="$missing\n  - Missing section: 'What is mocked / stubbed vs real'"
+          fi
+
+          if ! echo "$BODY" | grep -qi "next pr\|next step"; then
+            missing="$missing\n  - Missing section: 'What the next PR will do'"
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::PR description is incomplete. Fill in all sections from the template.$missing"
+            exit 1
+          fi
+
+          echo "PR description looks good."
