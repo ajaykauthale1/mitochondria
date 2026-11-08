@@ -127,15 +127,59 @@ type ResourceSnapshot struct {
 
 // Validate checks whether a TelemetryEvent has valid required fields and payload.
 func (e TelemetryEvent) Validate() error {
-	return ErrNotImplemented
+	if e.ID == "" {
+		return errors.New("event ID is required")
+	}
+	if e.Timestamp.IsZero() {
+		return errors.New("event timestamp is required")
+	}
+	switch e.Kind {
+	case EventProcessSpawn, EventProcessExit:
+		if e.Process == nil || e.Process.PID == 0 || e.Process.Name == "" {
+			return errors.New("process event requires non-nil ProcessInfo with PID and Name")
+		}
+	case EventFileActivity, EventStartupMod:
+		if e.File == nil || e.File.Path == "" || e.File.Operation == "" {
+			return errors.New("file/startup event requires non-nil FileEvent with Path and Operation")
+		}
+	case EventNetworkConn:
+		if e.Network == nil || e.Network.Protocol == "" || e.Network.RemoteAddr == "" {
+			return errors.New("network event requires non-nil NetworkEvent with Protocol and RemoteAddr")
+		}
+	default:
+		return errors.New("unknown event kind: " + string(e.Kind))
+	}
+	return nil
 }
 
 // SeverityFromScore maps a numeric risk score (1..100) to a deterministic Severity level.
 func SeverityFromScore(score int) (Severity, error) {
-	return "", ErrNotImplemented
+	if score < 1 || score > 100 {
+		return "", errors.New("score must be between 1 and 100")
+	}
+	switch {
+	case score >= 90:
+		return SeverityCritical, nil
+	case score >= 70:
+		return SeverityHigh, nil
+	case score >= 40:
+		return SeverityMedium, nil
+	default:
+		return SeverityLow, nil
+	}
 }
 
 // WithinBudget checks if the resource snapshot satisfies all non-negotiable performance targets.
 func (r ResourceSnapshot) WithinBudget() (bool, []string) {
-	return false, []string{"not implemented"}
+	var violations []string
+	if r.MemoryMB > MaxIdleMemoryMB {
+		violations = append(violations, "idle memory exceeds 100 MB budget")
+	}
+	if r.CPUPercent > MaxAverageCPUPercent {
+		violations = append(violations, "average CPU exceeds 2% budget")
+	}
+	if r.IdleAIPercent > MaxIdleAIPercent {
+		violations = append(violations, "idle AI inference exceeds 0% budget")
+	}
+	return len(violations) == 0, violations
 }
