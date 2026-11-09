@@ -70,26 +70,57 @@ $ mito status
   Run `mito investigate INC-204` or open the desktop dashboard for full graph.
 ```
 
-## 🧭 How it works
+## 🧭 How it works & Architecture
 
-```text
- OS Telemetry (Windows ETW/Win32 · macOS · Linux) ─┐
- Process lineage + Sensitive paths + Network ──────┼──▶ Deterministic Engine & Baseline (Go)
-                                                   │     (Bounded queues · SQLite WAL · <40MB RAM)
-                                                   ▼
-                                         Incident Correlator
-                                    (Evidence Graph: 1 Incident)
-                                                   │
-                         ┌─────────────────────────┴─────────────────────────┐
-                         ▼                                                   ▼
-            Native Desktop UI (Wails)                         Optional On-Demand AI Investigator
-       (Live graph, quarantine, rollback)                  (Sanitized metadata only · 0 idle cost)
+```mermaid
+flowchart TB
+    subgraph L1["1. OS Telemetry Collectors (Read-Only · Zero Kernel Drivers)"]
+        Win["Windows 11\nToolhelp32 · ReadDirectoryChangesW · TCP Table"]
+        Mac["macOS\nsysctl · FSEvents · LaunchAgents"]
+        Lin["Linux\n/proc · inotify · autostart"]
+    end
+
+    subgraph L2["2. Bounded Go Core Engine (< 40 MB Daemon RAM · < 2% CPU · 0% Idle AI)"]
+        Pipe["Bounded EventPipeline (cap: 1024)\nNon-blocking publish + burst drop counter\n+ Bounded SHA-256 LRU Cache (2048)"]
+        Det["Deterministic Rule Engine (R1–R9)\nTemp exec · Ancestry · .ssh touch · Ransomware velocity"]
+        Base["Behavioral Baseline State Machine\nNew → Learning → Established → Deviation"]
+        Corr["Incident Correlator & Evidence Graph\nCollapses multi-stage events into 1 Incident"]
+        DB[("Local SQLite (Pure-Go · WAL Mode)\nAuto ring-pruned max 50k events")]
+    end
+
+    subgraph L3["3. Presentation, On-Demand AI & Audited Containment"]
+        UI["Wails v2 Native Desktop UI (React + TS)\nOS WebView2 / WebKit · Live Resource Gauge"]
+        AI["On-Demand AI Investigator (Opt-In · 0 Idle RAM)\nSanitized metadata → Facts vs. Inferences vs. Fixes"]
+        Resp["Response & Quarantine Vault\nUser approval gate · Encrypted quarantine · 1-Click Rollback"]
+    end
+
+    Win & Mac & Lin --> Pipe
+    Pipe --> Det
+    Det <--> Base
+    Det --> Corr
+    Det --> DB
+    Corr --> DB
+    DB <--> UI
+    Corr -. "Only on High-Risk Incident\nor User Click" .-> AI
+    AI -.-> UI
+    UI -- "Requires Approval" --> Resp
+    Resp --> DB
 ```
 
-1. **Collects** lightweight, event-driven metadata (process spawns, lineage, network sockets, sensitive path touches) — no repeated full-disk scans.
-2. **Detects** deterministically first using rule modules and your laptop's own statistical baseline.
-3. **Correlates** related events across processes, files, persistence, and network into a single evidence graph.
-4. **Investigates** on demand—separating verified facts from inferences—and lets you approve safe, auditable containment with rollback.
+### Why these technology choices?
+
+Every layer was chosen to satisfy three constraints: **strict resource bounds (`<100 MB` RAM, `<2%` CPU)**, **long-term maintainability**, and **cross-platform native installers**:
+
+| Layer | Choice | Why we chose it (and what we rejected) |
+|---|---|---|
+| **Core Engine** | **Go 1.24+** (`GOMEMLIMIT` bounded) | Compiles to a single fast native binary, supports strict memory caps (`debug.SetMemoryLimit`), has stdlib parsers for Windows PE / Linux ELF / macOS Mach-O, and is 3–5x simpler to maintain than Rust/C++ while avoiding Python's memory overhead. |
+| **Desktop UI** | **Wails v2 + React/TS** (Native WebView2 / WebKit) | Uses the OS's built-in webview (`~12 MB` binary) instead of bundling Chromium + Node like Electron (`150–300 MB` idle RAM) or keeping a heavy Flutter Skia/Impeller engine in memory. |
+| **AI Layer** | **On-Demand Sanitized Adapter** (`0 MB` idle RAM) | Keeping a 3B–7B local LLM resident in RAM eats `3–6 GB` of memory and drains battery. Mitochondria runs deterministic Go rules on 100% of events and invokes AI (local Ollama or opt-in cloud) **only on-demand** for correlated incidents. |
+| **Event Queue** | **Bounded Go Channel (`cap: 1024`)** | Guarantees constant $O(1)$ memory during event storms (e.g., `npm install` or compiler builds) via non-blocking backpressure instead of unbounded slice queues that risk OOM crashes. |
+| **Local Store** | **Pure-Go SQLite (`modernc.org/sqlite`)** | Zero CGO dependencies (clean cross-platform builds), concurrent reads in **WAL mode**, and automatic ring-pruning so disk history never grows unboundedly. |
+| **OS Telemetry** | **User-Space Diff + `fsnotify`** (Optional ETW) | Avoids custom `.sys` kernel drivers (which risk BSODs) and avoids full-disk scans (which thrash SSDs); focuses on process lineage (`PID → PPID`) and high-risk paths (`%TEMP%`, `~/.ssh`, Startup). |
+
+> 📄 See [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) for the full layered architecture, sequence diagrams, and ADR trade-off matrix, and [**docs/THREAT_MODEL.md**](docs/THREAT_MODEL.md) for trust boundaries and security mitigations.
 
 ## ⚡ Resource budget
 
